@@ -24,6 +24,7 @@
 #include <stdint.h>
 #include <assert.h>
 #include <inttypes.h>
+#include <wchar.h>
 
 #include <unistd.h>
 
@@ -33,7 +34,18 @@
 #define MAX_CMDLINE_LEN 65536
 #define MT_MAGIC 1090650113
 #define MT_MAGIC_CONV 187
-#define WCHAR_CONVERT_CP CP_UNIXCP
+
+#if (defined(__CYGWIN32__) || defined(__MSYS__)) && !defined(__CYGWIN__)
+    #define __CYGWIN__
+#endif
+
+#if defined(__CYGWIN__)
+    #include <sys/cygwin.h>
+    #define WCHAR_CONVERT_CP CP_ACP
+    #define DEFAULT_TEMP_W L"C:\\Users\\Default\\AppData\\Local\\Temp"
+#else
+    #define WCHAR_CONVERT_CP CP_UNIXCP
+#endif
 
 #if defined(WRAP_CL)
     #define CMD_ENVVAR "CL_CMD"
@@ -55,6 +67,7 @@ static void fail (char *msg)
     exit(1);
 }
 
+#if defined(WRAP_CL)
 static int begins_with (const char *str, const char *needle, int *len)
 {
     int i;
@@ -70,6 +83,7 @@ static int begins_with (const char *str, const char *needle, int *len)
         }
     }
 }
+#endif
 
 static int begins_with_ci (const char *str, const char *needle, int *len)
 {
@@ -106,7 +120,7 @@ void print_w (WCHAR *w, int len)
         return;
     }
     
-    int alen = WideCharToMultiByte(CP_UNIXCP, 0, w, len, NULL, 0, NULL, NULL);
+    int alen = WideCharToMultiByte(WCHAR_CONVERT_CP, 0, w, len, NULL, 0, NULL, NULL);
     if (alen == 0) {
         fail("WideCharToMultiByte failed");
     }
@@ -116,7 +130,7 @@ void print_w (WCHAR *w, int len)
         fail("HeapAlloc failed");
     }
     
-    WideCharToMultiByte(CP_UNIXCP, 0, w, len, a, alen, NULL, NULL);
+    WideCharToMultiByte(WCHAR_CONVERT_CP, 0, w, len, a, alen, NULL, NULL);
     
     write(2, a, alen);
     
@@ -156,7 +170,7 @@ int main (int argc, char **argv)
         fail(CMD_ENVVAR" not set");
     }
     
-    #ifndef WINTEST
+    #if !defined(WINTEST) && !defined(__CYGWIN__)
     LPWSTR (*CDECL wine_get_dos_file_name_ptr)(LPCSTR);
     wine_get_dos_file_name_ptr = (void *)GetProcAddress(GetModuleHandleA("KERNEL32"), "wine_get_dos_file_name");
     if (!wine_get_dos_file_name_ptr) {
@@ -277,7 +291,14 @@ int main (int argc, char **argv)
         fixed[i] = '\0';
         
         // convert to windows path
+        #if defined(__CYGWIN__)
+        ssize_t path_size = cygwin_conv_path(CCP_POSIX_TO_WIN_W|CCP_RELATIVE, fixed, NULL, 0);
+        WCHAR *conv_path = (WCHAR *)malloc(path_size);
+        cygwin_conv_path(CCP_POSIX_TO_WIN_W|CCP_RELATIVE, fixed, conv_path, path_size);
+        #else
         WCHAR *conv_path = wine_get_dos_file_name_ptr(fixed);
+        #endif
+
         if (!conv_path) {
             fail("cannot convert path");
         }
@@ -842,6 +863,19 @@ next_arg:;
     print_a("Running: ", -1);
     print_w(cmdline, cmdline_len);
     print_a("\n", -1);
+    
+    #if defined(__CYGWIN__)
+    // setup environment variable TEMP for link.exe
+    ssize_t path_size = cygwin_conv_path(CCP_POSIX_TO_WIN_W, "/tmp", NULL, 0);
+    WCHAR *conv_path = (WCHAR *)malloc(path_size);
+    cygwin_conv_path(CCP_POSIX_TO_WIN_W, "/tmp", conv_path, path_size);
+    if (conv_path) {
+        SetEnvironmentVariableW(L"TEMP", conv_path);
+    } else {
+        // some default path that should exist and where we have write access to
+        SetEnvironmentVariableW(L"TEMP", DEFAULT_TEMP_W);
+    }
+    #endif
     
     // setup startup options
     STARTUPINFOW si;

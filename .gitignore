@@ -1,0 +1,13 @@
+/test.c
+/test.cpp
+
+*.obj
+*.o
+*.exe
+*.dll
+*.lib
+*.a
+*~
+
+Thumbs.db
+
